@@ -20,7 +20,7 @@ const Members = ({channelId, count}: Props) => {
     const title = formatMessage({id: 'channel_info.members', defaultMessage: 'Members'});
 
     const goToChannelMembers = preventDoubleTap(() => {
-        goToScreen(Screens.CHANNEL_ADD_PEOPLE, title, {channelId});
+        goToScreen(Screens.MANAGE_MEMBERS, title, {channelId});
     });
 
     return (

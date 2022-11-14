@@ -1,0 +1,201 @@
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React, {useCallback, useMemo, useRef, useState} from 'react';
+import {defineMessages, useIntl} from 'react-intl';
+import {Platform, SafeAreaView, StyleSheet, View} from 'react-native';
+
+import {addMembersToChannel} from '@actions/remote/channel';
+import {fetchProfilesInChannel, searchProfiles} from '@actions/remote/user';
+import Search from '@components/search';
+import UsersModal from '@components/users_modal';
+import {General} from '@constants';
+import {useServerUrl} from '@context/server';
+import {useTheme} from '@context/theme';
+import {ChannelModel} from '@database/models/server';
+import {t} from '@i18n';
+import {alertErrorWithFallback} from '@utils/draft';
+import {changeOpacity, getKeyboardAppearanceFromTheme} from '@utils/theme';
+
+// import {displayUsername} from '@utils/user';
+
+const style = StyleSheet.create({
+    container: {
+        flex: 1,
+    },
+    searchBar: {
+        marginLeft: 12,
+        marginRight: Platform.select({ios: 4, default: 12}),
+        marginVertical: 12,
+    },
+});
+
+const messages = defineMessages({
+    add_people: {
+        id: t('mobile.add_people.error'),
+        defaultMessage: "We couldn't add those users to the channel. Please check your connection and try again.",
+    },
+    button: {
+        id: t('mobile.manage_members.manage'),
+        defaultMessage: 'Manage',
+    },
+});
+
+type Props = {
+    componentId: string;
+    currentChannel: ChannelModel;
+    currentTeamId: string;
+    currentUserId: string;
+    teammateNameDisplay: string;
+}
+
+export default function ManageMembers({
+    componentId,
+    currentChannel,
+    currentTeamId,
+    currentUserId,
+    teammateNameDisplay,
+}: Props) {
+    const serverUrl = useServerUrl();
+    const intl = useIntl();
+    const theme = useTheme();
+
+    const [loading, setLoading] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<{[id: string]: UserProfile}>({});
+    const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
+    const [term, setTerm] = useState('');
+    const selectedCount = useMemo(() => Object.keys(selectedIds).length, [selectedIds]);
+
+    const page = useRef<number>(-1);
+    const searchTimeoutId = useRef<NodeJS.Timeout | null>(null);
+
+    const currentChannelId = currentChannel.id;
+
+    const getProfiles = useCallback(async () => {
+        return fetchProfilesInChannel(serverUrl, currentChannelId);
+    }, [serverUrl, currentTeamId]);
+
+    const onButtonTap = useCallback(async (selectedId?: {[id: string]: boolean}) => {
+        const idsToUse = selectedId ? Object.keys(selectedId) : Object.keys(selectedIds);
+        const result = await addMembersToChannel(serverUrl, currentChannelId, idsToUse, '', false);
+
+        if (result.error) {
+            alertErrorWithFallback(intl, result.error, messages.add_people);
+        }
+        return !result.error;
+    }, [selectedIds]);
+
+    const searchUsers = useCallback(async (searchTerm: string) => {
+        const lowerCasedTerm = searchTerm.toLowerCase();
+        return searchProfiles(serverUrl, lowerCasedTerm, {channel_id: currentChannelId, allow_inactive: true});
+    }, [serverUrl, currentTeamId]);
+
+    const handleSearchUsers = useCallback(async (searchTerm: string) => {
+        setLoading(true);
+
+        const results = await searchUsers(searchTerm);
+
+        setSearchResults(results?.data || []);
+        setLoading(false);
+    }, [searchUsers]);
+
+    const search = useCallback(() => {
+        handleSearchUsers(term);
+    }, [handleSearchUsers, term]);
+
+    const clearSearch = useCallback(() => {
+        setTerm('');
+        setSearchResults([]);
+    }, []);
+
+    // search only users not in channel
+    const onSearch = useCallback((text: string) => {
+        if (text) {
+            setTerm(text);
+            if (searchTimeoutId.current) {
+                clearTimeout(searchTimeoutId.current);
+            }
+
+            searchTimeoutId.current = setTimeout(() => {
+                handleSearchUsers(text);
+            }, General.SEARCH_TIMEOUT_MILLISECONDS);
+            return;
+        }
+
+        clearSearch();
+    }, [clearSearch, handleSearchUsers]);
+
+    const handleRemoveProfile = useCallback((id: string) => {
+        const newSelectedIds = Object.assign({}, selectedIds);
+
+        Reflect.deleteProperty(newSelectedIds, id);
+
+        setSelectedIds(newSelectedIds);
+    }, [selectedIds, setSelectedIds]);
+
+    const handleSelectProfile = useCallback((user: UserProfile) => {
+        if (selectedIds[user.id]) {
+            handleRemoveProfile(user.id);
+            return;
+        }
+
+        if (user.id === currentUserId) {
+            const selectedId = {[currentUserId]: true};
+            onButtonTap(selectedId);
+            return;
+        }
+
+        const wasSelected = selectedIds[user.id];
+        if (!wasSelected && selectedCount >= General.MAX_USERS_IN_GM) {
+            return;
+        }
+
+        const newSelectedIds = Object.assign({}, selectedIds);
+
+        if (!wasSelected) {
+            newSelectedIds[user.id] = user;
+        }
+
+        setSelectedIds(newSelectedIds);
+        clearSearch();
+    }, [clearSearch, currentUserId, handleRemoveProfile, onButtonTap, selectedIds, setSelectedIds]);
+
+    return (
+        <SafeAreaView
+            style={style.container}
+            testID='members_modal.screen'
+        >
+            <View style={style.searchBar}>
+                <Search
+                    testID='members_modal.search_bar'
+                    placeholder={intl.formatMessage({id: 'search_bar.search', defaultMessage: 'Search'})}
+                    cancelButtonTitle={intl.formatMessage({id: 'mobile.post.cancel', defaultMessage: 'Cancel'})}
+                    placeholderTextColor={changeOpacity(theme.centerChannelColor, 0.5)}
+                    onChangeText={onSearch}
+                    onSubmitEditing={search}
+                    onCancel={clearSearch}
+                    autoCapitalize='none'
+                    keyboardAppearance={getKeyboardAppearanceFromTheme(theme)}
+                    value={term}
+                />
+            </View>
+            <UsersModal
+                page={page}
+                term={term}
+                handleSelectProfile={handleSelectProfile}
+                buttonText={messages.button}
+                componentId={componentId}
+                handleRemoveProfile={handleRemoveProfile}
+                currentUserId={currentUserId}
+                getProfiles={getProfiles}
+                maxSelectedUsers={General.MAX_USERS_IN_GM}
+                loading={loading}
+                setLoading={setLoading}
+                searchResults={searchResults}
+                selectedIds={selectedIds}
+                teammateNameDisplay={teammateNameDisplay}
+                onButtonTap={onButtonTap}
+            />
+        </SafeAreaView>
+    );
+}

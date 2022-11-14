@@ -140,6 +140,9 @@ Navigation.setLazyComponentRegistrator((screenName) => {
         case Screens.LOGIN:
             screen = withIntl(require('@screens/login').default);
             break;
+        case Screens.MANAGE_MEMBERS:
+            screen = withServerDatabase(require('@screens/manage_members').default);
+            break;
         case Screens.MFA:
             screen = withIntl(require('@screens/mfa').default);
             break;
