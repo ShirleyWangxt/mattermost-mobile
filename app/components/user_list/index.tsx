@@ -9,7 +9,7 @@ import {storeProfile} from '@actions/local/user';
 import Loading from '@components/loading';
 import NoResultsWithTerm from '@components/no_results_with_term';
 import UserListRow from '@components/user_list_row';
-import {General, Screens} from '@constants';
+import {General, Permissions, Screens} from '@constants';
 import {useServerUrl} from '@context/server';
 import {useTheme} from '@context/theme';
 import {useKeyboardHeight} from '@hooks/device';
@@ -22,6 +22,9 @@ import {typography} from '@utils/typography';
 
 const INITIAL_BATCH_TO_RENDER = 15;
 const SCROLL_EVENT_THROTTLE = 60;
+
+const SECTION_TITLE_ADMINS = 'CHANNEL ADMINS';
+const SECTION_TITLE_MEMBERS = 'MEMBERS';
 
 const keyboardDismissProp = Platform.select({
     android: {
@@ -41,11 +44,19 @@ const sectionKeyExtractor = (profile: UserProfile) => {
     return profile.username[0].toUpperCase();
 };
 
-export function createProfilesSections(profiles: UserProfile[]) {
+const sectionRoleKeyExtractor = (profile: UserProfile) => {
+    if (profile.roles.includes(Permissions.CHANNEL_ADMIN_ROLE) ||
+        profile.roles.includes(Permissions.SYSTEM_ADMIN_ROLE)) {
+        return SECTION_TITLE_ADMINS;
+    }
+    return SECTION_TITLE_MEMBERS;
+};
+
+export function createProfilesSections(manageMode: boolean, profiles: UserProfile[]) {
     const sections: {[key: string]: UserProfile[]} = {};
     const sectionKeys: string[] = [];
     for (const profile of profiles) {
-        const sectionKey = sectionKeyExtractor(profile);
+        const sectionKey = manageMode ? sectionRoleKeyExtractor(profile) : sectionKeyExtractor(profile);
 
         if (!sections[sectionKey]) {
             sections[sectionKey] = [];
@@ -112,6 +123,8 @@ type Props = {
     handleSelectProfile: (user: UserProfile) => void;
     fetchMore: () => void;
     loading: boolean;
+    manageMode: boolean;
+    showManage: boolean;
     showNoResults: boolean;
     selectedIds: {[id: string]: UserProfile};
     testID?: string;
@@ -127,6 +140,8 @@ export default function UserList({
     handleSelectProfile,
     fetchMore,
     loading,
+    manageMode = false,
+    showManage = false,
     showNoResults,
     term,
     testID,
@@ -142,11 +157,13 @@ export default function UserList({
         {paddingBottom: keyboardHeight},
     ], [style, keyboardHeight]);
 
+    console.log('<><> UserList - showManage', showManage);
+
     const data = useMemo(() => {
         if (term) {
             return profiles;
         }
-        return createProfilesSections(profiles);
+        return createProfilesSections(manageMode, profiles);
     }, [term, profiles]);
 
     const openUserProfile = useCallback(async (profile: UserProfile) => {
@@ -179,7 +196,9 @@ export default function UserList({
                 isMyUser={currentUserId === item.id}
                 onPress={handleSelectProfile}
                 onLongPress={openUserProfile}
-                selectable={canAdd}
+                manageMode={manageMode}
+                showManage={showManage}
+                selectable={manageMode || canAdd}
                 selected={selected}
                 testID='create_direct_message.user_list.user_item'
                 teammateNameDisplay={teammateNameDisplay}
